@@ -1,0 +1,5 @@
+venv
+volume-*
+docker-compose.*
+Dockerfile
+setup.sh

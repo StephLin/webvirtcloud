@@ -40,6 +40,10 @@ ADD conf/runit/nginx-log-forwarder	/etc/service/nginx-log-forwarder/run
 ADD conf/runit/novncd.sh		/etc/service/novnc/run
 ADD conf/runit/webvirtcloud.sh		/etc/service/webvirtcloud/run
 
+# Setup ssh-key directory and its permission
+RUN mkdir -p /var/www/.ssh && \
+    chown -R www-data:www-data /var/www
+
 EXPOSE 80
 EXPOSE 6080
 

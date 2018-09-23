@@ -1,0 +1,15 @@
+version: "3"
+services:
+    webvirtcloud:
+        container_name:
+            webvirtcloud
+        restart:
+            always
+        image: stephlin/webvirtcloud
+        volumes:
+            - /etc/localtime:/etc/localtime:ro
+            - ./volume-webvirtcloud:/srv/webvirtcloud
+            - ./volume-ssh:/var/www/.ssh
+        ports:
+            - "80:80"
+            - "6080:6080"
