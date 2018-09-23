@@ -5,9 +5,11 @@ config = ''
 
 with open('./webvirtcloud/settings.py.template', 'r') as iFile:
     for line in iFile:
-        config += line + "\n"
-    haystack = string.ascii_letters + string.digits + string.punctuation
-    config = config.replace("SECRET_KEY = ''", "SECRET_KEY = '" + ''.join([random.SystemRandom().choice(haystack) for _ in range(50)]) + "'")
+        if "SECRET_KEY" in line:
+            haystack = string.ascii_letters + string.digits + string.punctuation
+            config += "SECRET_KEY = '''" + ''.join([random.SystemRandom().choice(haystack) for _ in range(50)]) + "'''\n"
+            continue
+        config += line
 
 with open('./webvirtcloud/settings.py', 'w') as oFile:
     oFile.write(config)
