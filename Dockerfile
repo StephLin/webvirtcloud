@@ -19,6 +19,9 @@ RUN cd /srv/webvirtcloud && \
 	pip install -r conf/requirements.txt && \
 	chown -R www-data:www-data /srv/webvirtcloud
 
+RUN cd /srv/webvirtcloud && \
+    python settings-init.py
+
 RUN cd /srv/webvirtcloud && . venv/bin/activate && \
 	python manage.py migrate && \
 	chown -R www-data:www-data /srv/webvirtcloud
