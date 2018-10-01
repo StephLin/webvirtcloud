@@ -256,6 +256,11 @@ python manage.py migrate
 sudo service supervisor restart
 ```
 
+### Docker-compose approach
+1. Clone the project.
+2. run `setup.sh` as user in docker group.
+3. Check everything is fine, then you may run the container with `docker-compose up -d`.
+
 ### License
 
 WebVirtCloud is licensed under the [Apache Licence, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0.html).
