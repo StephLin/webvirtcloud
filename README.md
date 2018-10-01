@@ -259,6 +259,7 @@ sudo service supervisor restart
 ### Docker-compose approach
 1. Clone the project.
 2. run `setup.sh` as user in docker group.
+    * Be aware of the **ports** used (This process may use port 80 and 6080. If willing you can eliminate then temporarily.)
 3. Check everything is fine, then you may run the container with `docker-compose up -d`.
 
 ### License
