@@ -1,5 +1,6 @@
 from vrtManager import util
 from vrtManager.connection import wvmConnect
+from webvirtcloud.settings import INSTANCE_VOLUME_DEFAULT_OWNER as owner
 
 
 class wvmStorages(wvmConnect):
@@ -205,14 +206,17 @@ class wvmStorage(wvmConnect):
             )
         return vol_list
 
-    def create_volume(self, name, size, vol_fmt='qcow2', metadata=False):
+    def create_volume(self, name, size, vol_fmt='qcow2', metadata=False, owner=owner):
         size = int(size) * 1073741824
         storage_type = self.get_type()
         alloc = size
         if vol_fmt == 'unknown':
             vol_fmt = 'raw'
         if storage_type == 'dir':
-            name += '.img'
+            if vol_fmt in ('qcow', 'qcow2'):
+                name += '.' + vol_fmt
+            else:
+                name += '.img'
             alloc = 0
         xml = """
             <volume>
@@ -222,8 +226,8 @@ class wvmStorage(wvmConnect):
                 <target>
                     <format type='%s'/>
                      <permissions>
-                        <owner>107</owner>
-                        <group>107</group>
+                        <owner>%s</owner>
+                        <group>%s</group>
                         <mode>0644</mode>
                         <label>virt_image_t</label>
                     </permissions>
@@ -232,10 +236,10 @@ class wvmStorage(wvmConnect):
                         <lazy_refcounts/>
                     </features>
                 </target>
-            </volume>""" % (name, size, alloc, vol_fmt)
+            </volume>""" % (name, size, alloc, vol_fmt, owner['uid'], owner['guid'])
         self._createXML(xml, metadata)
 
-    def clone_volume(self, name, target_file, vol_fmt=None, metadata=False):
+    def clone_volume(self, name, target_file, vol_fmt=None, metadata=False, owner=owner):
         storage_type = self.get_type()
         if storage_type == 'dir':
             target_file += '.img'
@@ -250,8 +254,8 @@ class wvmStorage(wvmConnect):
                 <target>
                     <format type='%s'/>
                     <permissions>
-                        <owner>107</owner>
-                        <group>107</group>
+                        <owner>%s</owner>
+                        <group>%s</group>
                         <mode>0644</mode>
                         <label>virt_image_t</label>
                     </permissions>
@@ -260,5 +264,5 @@ class wvmStorage(wvmConnect):
                         <lazy_refcounts/>
                     </features>
                 </target>
-            </volume>""" % (target_file, vol_fmt)
+            </volume>""" % (target_file, vol_fmt, owner['uid'],owner['guid'])
         self._createXMLFrom(xml, vol, metadata)

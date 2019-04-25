@@ -1,7 +1,8 @@
 import time
 import os.path
 try:
-    from libvirt import libvirtError, VIR_DOMAIN_XML_SECURE, VIR_MIGRATE_LIVE, VIR_MIGRATE_UNSAFE
+    from libvirt import libvirtError, VIR_DOMAIN_XML_SECURE, VIR_MIGRATE_LIVE, VIR_MIGRATE_UNSAFE, VIR_DOMAIN_RUNNING, \
+        VIR_DOMAIN_AFFECT_LIVE, VIR_DOMAIN_AFFECT_CONFIG
 except:
     from libvirt import libvirtError, VIR_DOMAIN_XML_SECURE, VIR_MIGRATE_LIVE
 from vrtManager import util
@@ -10,6 +11,7 @@ from datetime import datetime
 from vrtManager.connection import wvmConnect
 from vrtManager.storage import wvmStorage
 from webvirtcloud.settings import QEMU_CONSOLE_TYPES
+from webvirtcloud.settings import INSTANCE_VOLUME_DEFAULT_OWNER as owner
 
 
 class wvmInstances(wvmConnect):
@@ -187,6 +189,18 @@ class wvmInstance(wvmConnect):
         title = util.get_xml_path(self._XMLDesc(0), "/domain/title")
         return title if title else ''
 
+    def get_filterrefs(self):
+
+        def filterrefs(ctx):
+            result = []
+            for net in ctx.xpath('/domain/devices/interface'):
+                filterref = net.xpath('filterref/@filter')
+                if filterref:
+                    result.append(filterref[0])
+            return result
+
+        return util.get_xml_path(self._XMLDesc(0), func=filterrefs)
+
     def get_description(self):
         description = util.get_xml_path(self._XMLDesc(0), "/domain/description")
         return description if description else ''
@@ -219,82 +233,200 @@ class wvmInstance(wvmConnect):
                 mac_host = net.xpath('mac/@address')[0]
                 network_host = net.xpath('source/@network|source/@bridge|source/@dev')[0]
                 target_host = '' if not net.xpath('target/@dev') else net.xpath('target/@dev')[0]
+                filterref_host = '' if not net.xpath('filterref/@filter') else net.xpath('filterref/@filter')[0]
                 try:
                     net = self.get_network(network_host)
                     ip = get_mac_ipaddr(net, mac_host)
                 except libvirtError as e:
                     ip = None
-                result.append({'mac': mac_host, 'nic': network_host, 'target': target_host,'ip': ip})
+                result.append({'mac': mac_host, 'nic': network_host, 'target': target_host,'ip': ip, 'filterref': filterref_host})
             return result
 
         return util.get_xml_path(self._XMLDesc(0), func=networks)
 
-    def get_disk_device(self):
+    def get_disk_devices(self):
         def disks(doc):
             result = []
-            dev = None
-            volume = None
-            storage = None
-            src_fl = None
-            disk_format = None
-            disk_size = None
-
+            dev = volume = storage = src_file = None
+            disk_format = used_size = disk_size = disk_cache = None
+            
             for disk in doc.xpath('/domain/devices/disk'):
                 device = disk.xpath('@device')[0]
                 if device == 'disk':
                     try:
                         dev = disk.xpath('target/@dev')[0]
-                        src_fl = disk.xpath('source/@file|source/@dev|source/@name|source/@volume')[0]
+                        bus = disk.xpath('target/@bus')[0]
+                        src_file = disk.xpath('source/@file|source/@dev|source/@name|source/@volume')[0]
                         try:
                             disk_format = disk.xpath('driver/@type')[0]
                         except:
                             pass
                         try:
-                            vol = self.get_volume_by_path(src_fl)
+                            disk_cache = disk.xpath('driver/@cache')[0]
+                        except:
+                            pass
+                        try:
+                            vol = self.get_volume_by_path(src_file)
                             volume = vol.name()
+
                             disk_size = vol.info()[1]
+                            used_size = vol.info()[2]
                             stg = vol.storagePoolLookupByVolume()
                             storage = stg.name()
                         except libvirtError:
-                            volume = src_fl
+                            volume = src_file
                     except:
                         pass
                     finally:
                         result.append(
-                            {'dev': dev, 'image': volume, 'storage': storage, 'path': src_fl,
-                             'format': disk_format, 'size': disk_size})
+                            {'dev': dev, 'bus': bus, 'image': volume, 'storage': storage, 'path': src_file,
+                             'format': disk_format, 'size': disk_size, 'used': used_size, 'cache': disk_cache})
             return result
 
         return util.get_xml_path(self._XMLDesc(0), func=disks)
 
-    def get_media_device(self):
+    def get_media_devices(self):
         def disks(doc):
             result = []
-            dev = None
-            volume = None
-            storage = None
-            src_fl = None
+            dev = volume = storage = None
+            src_file = None
             for media in doc.xpath('/domain/devices/disk'):
                 device = media.xpath('@device')[0]
                 if device == 'cdrom':
                     try:
                         dev = media.xpath('target/@dev')[0]
+                        bus = media.xpath('target/@bus')[0]
                         try:
-                            src_fl = media.xpath('source/@file')[0]
-                            vol = self.get_volume_by_path(src_fl)
+                            src_file = media.xpath('source/@file')[0]
+                            vol = self.get_volume_by_path(src_file)
                             volume = vol.name()
                             stg = vol.storagePoolLookupByVolume()
                             storage = stg.name()
                         except:
-                            src_fl = None
-                            volume = src_fl
+                            src_file = None
+                            volume = src_file
                     except:
                         pass
                     finally:
-                        result.append({'dev': dev, 'image': volume, 'storage': storage, 'path': src_fl})
+                        result.append({'dev': dev, 'image': volume, 'storage': storage, 'path': src_file, 'bus': bus})
             return result
 
         return util.get_xml_path(self._XMLDesc(0), func=disks)
+
+    def get_bootmenu(self):
+        menu = util.get_xml_path(self._XMLDesc(0), "/domain/os/bootmenu/@enable")
+        return True if menu == 'yes' else False
+
+    def set_bootmenu(self, flag):
+        tree = ElementTree.fromstring(self._XMLDesc(0))
+        os = tree.find('os')
+        menu = os.find("bootmenu")
+
+        if menu == None:
+            bootmenu = ElementTree.fromstring("<bootmenu enable='yes'/>")
+            os.append(bootmenu)
+            menu = os.find("bootmenu")
+
+        if flag == 0:  # Disable
+            menu.attrib['enable'] = 'no'
+        elif flag == 1:  # Enable
+            menu.attrib['enable'] = 'yes'
+        elif flag == -1:  # Remove
+            os.remove(menu)
+        else:
+            raise Exception('Unknown boot menu option, please choose one of 0:disable, 1:enable, -1:remove')
+
+        xmldom = ElementTree.tostring(tree)
+        self._defineXML(xmldom)
+
+    def get_bootorder(self):
+        boot_order = {}
+        tree = ElementTree.fromstring(self._XMLDesc(0))
+        os = tree.find('os')
+        boot = os.findall('boot')
+
+        for idx, b in enumerate(boot):
+            dev = b.get('dev')
+            if dev == 'hd':
+                target = "disk"
+                type = "file"
+            elif dev == 'fd':
+                target = "floppy"
+                type = "file"
+            elif dev == 'cdrom':
+                target = "cdrom"
+                type = "file"
+            elif dev == 'network':
+                target = "network"
+                type = "network"
+            boot_order[idx] = {"type": type, "dev": dev, "target": target}
+
+        devices = tree.find('devices')
+        for dev in devices:
+            dev_target = dev_type = dev_device = dev_alias = None
+            boot_dev = dev.find('boot')
+            if boot_dev != None:
+                idx = boot_dev.get('order')
+                dev_type = dev.get('type')
+                dev_device = dev.get('device')
+
+                if dev_type == 'file':
+                    dev_target = dev.find('target').get('dev')
+
+                elif dev_type == 'network':
+                    dev_mac = dev.find('mac').get('address')
+                    dev_device = "network"
+                    dev_target = "nic-{}".format(dev_mac[9:])
+                elif dev_type == 'usb':
+                    pass
+
+                boot_order[int(idx)-1] = {"type": dev_type, "dev": dev_device, "target": dev_target}
+
+        return boot_order
+
+    def set_bootorder(self, devorder):
+        if not devorder:
+            return
+
+        def remove_bootorder():
+            tree = ElementTree.fromstring(self._XMLDesc(0))
+            os = tree.find('os')
+            boot = os.findall('boot')
+            # Remove old style boot order
+            for b in boot:
+                os.remove(b)
+            # Remove rest of them
+            for dev in tree.find('devices'):
+                boot_dev = dev.find('boot')
+                if boot_dev != None:
+                    dev.remove(boot_dev)
+            return tree
+
+        tree = remove_bootorder()
+
+        for idx, dev in devorder.items():
+            order = ElementTree.fromstring("<boot order='{}'/>".format(idx + 1))
+            if dev['type'] == 'disk':
+                devices = tree.findall("./devices/disk[@device='disk']")
+                for d in devices:
+                    device = d.find("./target[@dev='{}']".format(dev['dev']))
+                    if device != None:
+                        d.append(order)
+            elif dev['type'] == 'cdrom':
+                devices = tree.findall("./devices/disk[@device='cdrom']")
+                for d in devices:
+                    device = d.find("./target[@dev='{}']".format(dev['dev']))
+                    if device != None:
+                        d.append(order)
+            elif dev['type'] == 'network':
+                devices = tree.findall("./devices/interface[@type='network']")
+                for d in devices:
+                    device = d.find("mac[@address='{}']".format(dev['dev']))
+                    if device != None:
+                        d.append(order)
+            else:
+                raise Exception('Invalid Device Type for boot order')
+        self._defineXML(ElementTree.tostring(tree))
 
     def mount_iso(self, dev, image):
         def attach_iso(dev, disk, vol):
@@ -345,21 +477,41 @@ class wvmInstance(wvmConnect):
             xmldom = ElementTree.tostring(tree)
         self._defineXML(xmldom)
 
-    def attach_disk(self, source, target, sourcetype='file', type='disk', driver='qemu', subdriver='raw', cache='none', targetbus='ide'):
+    def attach_disk(self, source, target, sourcetype='file', device='disk', driver='qemu', subdriver='raw', cache='none', targetbus='ide'):
         tree = ElementTree.fromstring(self._XMLDesc(0))
-        xml_disk = """
-        <disk type='%s' device='%s'>
-          <driver name='%s' type='%s' cache='%s'/>
-          <source file='%s'/>
+        xml_disk = "<disk type='%s' device='%s'>" % (sourcetype, device)
+        if device == 'cdrom':
+            xml_disk += "<driver name='%s' type='%s'/>" % (driver, subdriver)
+        elif device == 'disk':
+            xml_disk += "<driver name='%s' type='%s' cache='%s'/>" % (driver, subdriver, cache)
+        xml_disk += """<source file='%s'/>
           <target dev='%s' bus='%s'/>
         </disk>
-        """ % (sourcetype, type, driver, subdriver, cache, source, target, targetbus)
+        """ % (source, target, targetbus)
         if self.get_status() == 5:
             devices = tree.find('devices')
             elm_disk = ElementTree.fromstring(xml_disk)
             devices.append(elm_disk)
             xmldom = ElementTree.tostring(tree)
             self._defineXML(xmldom)
+
+    def detach_disk(self, dev):
+        tree = ElementTree.fromstring(self._XMLDesc(0))
+
+        for disk in tree.findall("./devices/disk"):
+            target = disk.find("target")
+            if target.get("dev") == dev:
+                devices = tree.find('devices')
+                devices.remove(disk)
+
+                if self.get_status() == 1:
+                    xml_disk = ElementTree.tostring(disk)
+                    ret = self.instance.detachDevice(xml_disk)
+                    xmldom = self._XMLDesc(VIR_DOMAIN_XML_SECURE)
+                if self.get_status() == 5:
+                    xmldom = ElementTree.tostring(tree)
+                break
+        self._defineXML(xmldom)
 
     def cpu_usage(self):
         cpu_usage = {}
@@ -451,11 +603,9 @@ class wvmInstance(wvmConnect):
         return telnet_port
 
     def get_console_listen_addr(self):
-        listen_addr = util.get_xml_path(self._XMLDesc(0),
-                                        "/domain/devices/graphics/@listen")
+        listen_addr = util.get_xml_path(self._XMLDesc(0), "/domain/devices/graphics/@listen")
         if listen_addr is None:
-            listen_addr = util.get_xml_path(self._XMLDesc(0),
-                                            "/domain/devices/graphics/listen/@address")
+            listen_addr = util.get_xml_path(self._XMLDesc(0), "/domain/devices/graphics/listen/@address")
             if listen_addr is None:
                     return "127.0.0.1"
         return listen_addr
@@ -487,8 +637,7 @@ class wvmInstance(wvmConnect):
         return self._defineXML(newxml)
     
     def get_console_socket(self):
-        socket = util.get_xml_path(self._XMLDesc(0),
-                                   "/domain/devices/graphics/@socket")
+        socket = util.get_xml_path(self._XMLDesc(0), "/domain/devices/graphics/@socket")
         return socket
 
     def get_console_type(self):
@@ -577,8 +726,14 @@ class wvmInstance(wvmConnect):
         """
         Function change ram and cpu on vds.
         """
+
         memory = int(memory) * 1024
         cur_memory = int(cur_memory) * 1024
+        # if dom is running change only ram
+        if self.get_status() == VIR_DOMAIN_RUNNING:
+            self.set_memory(cur_memory, VIR_DOMAIN_AFFECT_LIVE)
+            self.set_memory(cur_memory, VIR_DOMAIN_AFFECT_CONFIG)
+            return
 
         xml = self._XMLDesc(VIR_DOMAIN_XML_SECURE)
         tree = ElementTree.fromstring(xml)
@@ -614,8 +769,8 @@ class wvmInstance(wvmConnect):
                         iso.append(img)
         return iso
 
-    def delete_disk(self):
-        disks = self.get_disk_device()
+    def delete_all_disks(self):
+        disks = self.get_disk_devices()
         for disk in disks:
             vol = self.get_volume_by_path(disk.get('path'))
             vol.delete(0)
@@ -700,16 +855,15 @@ class wvmInstance(wvmConnect):
                 source_file = elm.get('file')
                 if source_file:
                     clone_dev_path.append(source_file)
-                    clone_path = os.path.join(os.path.dirname(source_file),
-                                              target_file)
+                    clone_path = os.path.join(os.path.dirname(source_file), target_file)
                     elm.set('file', clone_path)
 
                     vol = self.get_volume_by_path(source_file)
-                    vol_format = util.get_xml_path(vol.XMLDesc(0),
-                                                   "/volume/target/format/@type")
+                    vol_format = util.get_xml_path(vol.XMLDesc(0), "/volume/target/format/@type")
 
                     if vol_format == 'qcow2' and meta_prealloc:
                         meta_prealloc = True
+
                     vol_clone_xml = """
                                     <volume>
                                         <name>%s</name>
@@ -717,8 +871,19 @@ class wvmInstance(wvmConnect):
                                         <allocation>0</allocation>
                                         <target>
                                             <format type='%s'/>
+                                            <permissions>
+                                                <owner>%s</owner>
+                                                <group>%s</group>
+                                                <mode>0644</mode>
+                                                <label>virt_image_t</label>
+                                            </permissions>
+                                            <compat>1.1</compat>
+                                            <features>
+                                                <lazy_refcounts/>
+                                            </features>
                                         </target>
-                                    </volume>""" % (target_file, vol_format)
+                                    </volume>""" % (target_file, vol_format, owner['uid'], owner['guid'])
+
                     stg = vol.storagePoolLookupByVolume()
                     stg.createXMLFrom(vol_clone_xml, vol, meta_prealloc)
                 
@@ -729,8 +894,7 @@ class wvmInstance(wvmConnect):
                     elm.set('name', clone_name)
 
                     vol = self.get_volume_by_path(source_name)
-                    vol_format = util.get_xml_path(vol.XMLDesc(0),
-                                                   "/volume/target/format/@type")
+                    vol_format = util.get_xml_path(vol.XMLDesc(0), "/volume/target/format/@type")
 
                     vol_clone_xml = """
                                     <volume type='network'>
@@ -776,7 +940,7 @@ class wvmInstance(wvmConnect):
             bridge_name = net.bridgeName()
         return bridge_name
         
-    def add_network(self, mac_address, source, source_type='net', interface_type='bridge', model='virtio'):
+    def add_network(self, mac_address, source, source_type='net', interface_type='bridge', model='virtio', nwfilter=None):
         tree = ElementTree.fromstring(self._XMLDesc(0))
         bridge_name = self.get_bridge_name(source, source_type)
         xml_interface = """
@@ -784,8 +948,13 @@ class wvmInstance(wvmConnect):
           <mac address='%s'/>
           <source bridge='%s'/>
           <model type='%s'/>
-        </interface>
-        """ % (interface_type, mac_address, bridge_name, model)
+          """ % (interface_type, mac_address, bridge_name, model)
+        if nwfilter:
+            xml_interface += """
+            <filterref filter='%s'/>
+            """ % nwfilter
+        xml_interface += """</interface>"""
+
         if self.get_status() == 5:
             devices = tree.find('devices')
             elm_interface = ElementTree.fromstring(xml_interface)
@@ -793,20 +962,57 @@ class wvmInstance(wvmConnect):
             xmldom = ElementTree.tostring(tree)
             self._defineXML(xmldom)
 
+    def delete_network(self, mac_address):
+        tree = ElementTree.fromstring(self._XMLDesc(0))
+        devices = tree.find('devices')
+        for interface in tree.findall('devices/interface'):
+            source = interface.find('mac')
+            if source.get('address', '') == mac_address:
+                source = None
+                devices.remove(interface)
+                new_xml = ElementTree.tostring(tree)
+                self._defineXML(new_xml)
+
     def change_network(self, network_data):
         xml = self._XMLDesc(VIR_DOMAIN_XML_SECURE)
         tree = ElementTree.fromstring(xml)
-
         for num, interface in enumerate(tree.findall('devices/interface')):
             net_source = network_data['net-source-' + str(num)]
             net_source_type = network_data['net-source-' + str(num) + '-type']
             net_mac = network_data['net-mac-' + str(num)]
+            net_filter = network_data['net-nwfilter-' + str(num)]
             bridge_name = self.get_bridge_name(net_source, net_source_type)
             if interface.get('type') == 'bridge':
                 source = interface.find('mac')
                 source.set('address', net_mac)
                 source = interface.find('source')
                 source.set('bridge', bridge_name)
+                source = interface.find('filterref')
+
+                if net_filter:
+                    if source is not None: source.set('filter', net_filter)
+                    else:
+                        element = ElementTree.Element("filterref")
+                        element.attrib['filter'] = net_filter
+                        interface.append(element)
+                else:
+                    if source is not None: interface.remove(source)
+            elif interface.get('type') == 'network':
+                source = interface.find('mac')
+                source.set('address', net_mac)
+                source = interface.find('source')
+                source.set('network', net_source)
+                source = interface.find('filterref')
+
+                if net_filter:
+                    if source is not None: source.set('filter', net_filter)
+                    else:
+                        element = ElementTree.Element("filterref")
+                        element.attrib['filter'] = net_filter
+                        interface.append(element)
+                else:
+                    if source is not None: interface.remove(source)
+
         new_xml = ElementTree.tostring(tree)
         self._defineXML(new_xml)
 
@@ -833,4 +1039,7 @@ class wvmInstance(wvmConnect):
 
         new_xml = ElementTree.tostring(tree)
         self._defineXML(new_xml)
+
+    def set_memory(self, size, flags=0):
+        self.instance.setMemoryFlags(size, flags)
 

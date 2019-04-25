@@ -133,3 +133,21 @@ p {
     display: inline;
     min-width: 250px;
 }
+
+.multipleselect {
+    width:27em;
+    height:10em;
+    border:solid 2px #c0c0c0;
+    overflow:auto;
+    padding: 0 1em;
+    margin: 0.9em;
+}
+
+.multipleselect label {
+    display:block;
+}
+
+.multipleselect-on {
+    color:#ffffff;
+    background-color:#000099;
+}

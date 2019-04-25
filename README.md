@@ -1,4 +1,4 @@
-## WebVirtCloud Beta
+## WebVirtCloud
 
 
 ## Features
@@ -213,6 +213,17 @@ Done!!
 
 Go to http://serverip and you should see the login screen.
 
+### Alternative running novncd via runit
+Alternative to running nonvcd via supervisor is runit.
+
+On Debian systems install runit and configure novncd service
+```
+apt install runit runit-systemd
+mkdir /etc/service/novncd/
+ln -s /srv/webvirtcloud/conf/runit/novncd.sh /etc/service/novncd/run
+systemctl start runit.service
+```
+
 ### Default credentials
 <pre>
 login: admin
@@ -255,6 +266,15 @@ pip install -U -r conf/requirements.txt
 python manage.py migrate
 sudo service supervisor restart
 ```
+### Screenshots
+Instance Detail:
+<img src="doc/images/instance.PNG" width="95%" align="center"/>
+Instance List:</br>
+<img src="doc/images/grouped.PNG" width="47%"/>
+<img src="doc/images/nongrouped.PNG" width="51%"/>
+Other: </br>
+<img src="doc/images/hosts.PNG" width="52%"/>
+<img src="doc/images/log.PNG" width="47%"/>
 
 ### Docker-compose approach
 1. Clone the project.

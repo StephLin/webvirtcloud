@@ -2,6 +2,7 @@ import re
 from django import forms
 from django.utils.translation import ugettext_lazy as _
 from create.models import Flavor
+from webvirtcloud.settings import QEMU_CONSOLE_LISTEN_ADDRESSES
 
 
 class FlavorAddForm(forms.Form):
@@ -36,7 +37,8 @@ class NewVMForm(forms.Form):
     host_model = forms.BooleanField(required=False)
     disk = forms.IntegerField(required=False)
     memory = forms.IntegerField(error_messages={'required': _('No RAM size has been entered')})
-    networks = forms.CharField(error_messages={'required': _('No Network pool has been choice')})
+    networks = forms.CharField(error_messages={'required': _('No Network pool has been choosen')})
+    nwfilter = forms.CharField(required=False)
     storage = forms.CharField(max_length=20, required=False)
     template = forms.CharField(required=False)
     images = forms.CharField(required=False)
@@ -44,7 +46,11 @@ class NewVMForm(forms.Form):
     hdd_size = forms.IntegerField(required=False)
     meta_prealloc = forms.BooleanField(required=False)
     virtio = forms.BooleanField(required=False)
+    qemu_ga = forms.BooleanField(required=False)
     mac = forms.CharField(required=False)
+    console_pass = forms.CharField(required=False,empty_value="", widget=forms.PasswordInput())
+    video = forms.CharField(error_messages={'required': _('Please select a graphic display')})
+    listener_addr = forms.ChoiceField(required=True, widget=forms.RadioSelect, choices=QEMU_CONSOLE_LISTEN_ADDRESSES)
 
     def clean_name(self):
         name = self.cleaned_data['name']
@@ -54,3 +60,4 @@ class NewVMForm(forms.Form):
         elif len(name) > 20:
             raise forms.ValidationError(_('The name of the virtual machine must not exceed 20 characters'))
         return name
+

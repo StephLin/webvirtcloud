@@ -24,6 +24,7 @@ INSTALLED_APPS = (
     'networks',
     'storages',
     'interfaces',
+    'nwfilters',
     'instances',
     'secrets',
     'logs',
@@ -134,6 +135,7 @@ ALLOW_INSTANCE_MULTIPLE_OWNER = True
 NEW_USER_DEFAULT_INSTANCES = []
 CLONE_INSTANCE_DEFAULT_PREFIX = 'instance'
 CLONE_INSTANCE_AUTO_NAME = False
+CLONE_INSTANCE_AUTO_MIGRATE = False
 LOGS_PER_PAGE = 100
 QUOTA_DEBUG = True
 ALLOW_EMPTY_PASSWORD = True
@@ -150,3 +152,5 @@ VIEW_INSTANCES_LIST_STYLE = 'grouped'
 INSTANCE_VOLUME_DEFAULT_FORMAT = 'qcow2'
 INSTANCE_VOLUME_DEFAULT_BUS = 'virtio'
 INSTANCE_VOLUME_DEFAULT_CACHE = 'directsync'
+# up to os, 0=root, 107=qemu or libvirt-bin(for ubuntu)
+INSTANCE_VOLUME_DEFAULT_OWNER = {'uid': 0, 'guid': 0}

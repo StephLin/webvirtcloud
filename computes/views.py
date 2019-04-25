@@ -9,7 +9,7 @@ from instances.models import Instance
 from accounts.models import UserInstance
 from computes.forms import ComputeAddTcpForm, ComputeAddSshForm, ComputeEditHostForm, ComputeAddTlsForm, ComputeAddSocketForm
 from vrtManager.hostdetails import wvmHostDetails
-from vrtManager.connection import CONN_SSH, CONN_TCP, CONN_TLS, CONN_SOCKET, connection_manager
+from vrtManager.connection import CONN_SSH, CONN_TCP, CONN_TLS, CONN_SOCKET, connection_manager, wvmConnect
 from libvirt import libvirtError
 
 
@@ -156,6 +156,9 @@ def overview(request, compute_id):
         hostname, host_arch, host_memory, logical_cpu, model_cpu, uri_conn = conn.get_node_info()
         hypervisor = conn.hypervisor_type()
         mem_usage = conn.get_memory_usage()
+        emulator = conn.get_emulator(host_arch)
+        version = conn.get_version()
+        lib_version = conn.get_lib_version()
         conn.close()
     except libvirtError as lib_err:
         error_messages.append(lib_err)
@@ -174,7 +177,7 @@ def compute_graph(request, compute_id):
     datasets = {}
     cookies = {}
     compute = get_object_or_404(Compute, pk=compute_id)
-    curent_time = time.strftime("%H:%M:%S")
+    current_time = time.strftime("%H:%M:%S")
 
     try:
         conn = wvmHostDetails(compute.hostname,
@@ -205,7 +208,7 @@ def compute_graph(request, compute_id):
         datasets['mem'] = eval(cookies['mem'])
         datasets['timer'] = eval(cookies['timer'])
 
-    datasets['timer'].append(curent_time)
+    datasets['timer'].append(current_time)
     datasets['cpu'].append(int(cpu_usage['usage']))
     datasets['mem'].append(int(mem_usage['usage']) / 1048576)
 
@@ -224,3 +227,32 @@ def compute_graph(request, compute_id):
     response.cookies['mem'] = datasets['mem']
     response.write(data)
     return response
+
+
+@login_required
+def get_compute_disk_buses(request, compute_id, disk):
+    data = {}
+    compute = get_object_or_404(Compute, pk=compute_id)
+    try:
+        conn = wvmConnect(compute.hostname,
+                          compute.login,
+                          compute.password,
+                          compute.type)
+
+        disk_device_types = conn.get_disk_device_types()
+        disk_bus_types = conn.get_disk_bus_types()
+
+        if disk in disk_device_types:
+            if disk == 'disk':
+                data['bus'] = sorted(disk_device_types)
+            elif disk == 'cdrom':
+                data['bus'] = ['ide', 'sata', 'scsi',]
+            elif disk == 'floppy':
+                data['bus'] = ['fdc',]
+            elif disk == 'lun':
+                data['bus'] = ['scsi',]
+    except libvirtError:
+        pass
+
+    return HttpResponse(json.dumps(data))
+

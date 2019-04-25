@@ -2,6 +2,8 @@ import string
 from vrtManager import util
 from vrtManager.connection import wvmConnect
 from webvirtcloud.settings import QEMU_CONSOLE_DEFAULT_TYPE
+from webvirtcloud.settings import QEMU_CONSOLE_LISTEN_ADDRESSES
+from webvirtcloud.settings import INSTANCE_VOLUME_DEFAULT_OWNER as default_owner
 from webvirtcloud.settings import INSTANCE_VOLUME_DEFAULT_FORMAT
 
 
@@ -51,12 +53,15 @@ class wvmCreate(wvmConnect):
         """Get guest capabilities"""
         return util.get_xml_path(self.get_cap_xml(), "/capabilities/host/cpu/arch")
 
-    def create_volume(self, storage, name, size, image_format=image_format, metadata=False):
+    def create_volume(self, storage, name, size, image_format=image_format, metadata=False, owner=default_owner):
         size = int(size) * 1073741824
         stg = self.get_storage(storage)
         storage_type = util.get_xml_path(stg.XMLDesc(0), "/pool/@type")
         if storage_type == 'dir':
-            name += '.img'
+            if image_format in ('qcow', 'qcow2'):
+                name += '.' + image_format
+            else:
+                name += '.img'
             alloc = 0
         else:
             alloc = size
@@ -69,13 +74,17 @@ class wvmCreate(wvmConnect):
                 <target>
                     <format type='%s'/>
                      <permissions>
-                        <owner>107</owner>
-                        <group>107</group>
+                        <owner>%s</owner>
+                        <group>%s</group>
                         <mode>0644</mode>
                         <label>virt_image_t</label>
                     </permissions>
+                    <compat>1.1</compat>
+                    <features>
+                        <lazy_refcounts/>
+                    </features>
                 </target>
-            </volume>""" % (name, size, alloc, image_format)
+            </volume>""" % (name, size, alloc, image_format, owner['uid'], owner['guid'])
         stg.createXML(xml, metadata)
         try:
             stg.refresh(0)
@@ -87,15 +96,18 @@ class wvmCreate(wvmConnect):
     def get_volume_type(self, path):
         vol = self.get_volume_by_path(path)
         vol_type = util.get_xml_path(vol.XMLDesc(0), "/volume/target/format/@type")
-        if vol_type == 'unknown':
+        if vol_type == 'unknown' or vol_type == 'iso':
             return 'raw'
         if vol_type:
             return vol_type
         else:
             return 'raw'
 
-    def get_volume_path(self, volume):
-        storages = self.get_storages(only_actives=True)
+    def get_volume_path(self, volume, pool=None):
+        if not pool:
+            storages = self.get_storages(only_actives=True)
+        else:
+            storages = [pool,]
         for storage in storages:
             stg = self.get_storage(storage)
             if stg.info()[0] != 0:
@@ -109,9 +121,13 @@ class wvmCreate(wvmConnect):
         vol = self.get_volume_by_path(vol_path)
         return vol.storagePoolLookupByVolume()
 
-    def clone_from_template(self, clone, template, metadata=False):
+    def clone_from_template(self, clone, template, storage=None, metadata=False, owner=default_owner):
         vol = self.get_volume_by_path(template)
-        stg = vol.storagePoolLookupByVolume()
+        if not storage:
+            stg = vol.storagePoolLookupByVolume()
+        else:
+            stg = self.get_storage(storage)
+
         storage_type = util.get_xml_path(stg.XMLDesc(0), "/pool/@type")
         format = util.get_xml_path(vol.XMLDesc(0), "/volume/target/format/@type")
         if storage_type == 'dir':
@@ -126,8 +142,8 @@ class wvmCreate(wvmConnect):
                 <target>
                     <format type='%s'/>
                      <permissions>
-                        <owner>107</owner>
-                        <group>107</group>
+                        <owner>%s</owner>
+                        <group>%s</group>
                         <mode>0644</mode>
                         <label>virt_image_t</label>
                     </permissions>
@@ -136,7 +152,7 @@ class wvmCreate(wvmConnect):
                         <lazy_refcounts/>
                     </features>
                 </target>
-            </volume>""" % (clone, format)
+            </volume>""" % (clone, format, owner['uid'], owner['guid'])
         stg.createXMLFrom(xml, vol, metadata)
         clone_vol = stg.storageVolLookupByName(clone)
         return clone_vol.path()
@@ -148,7 +164,7 @@ class wvmCreate(wvmConnect):
         vol = self.get_volume_by_path(path)
         vol.delete()
 
-    def create_instance(self, name, memory, vcpu, host_model, uuid, images, cache_mode, networks, virtio, mac=None):
+    def create_instance(self, name, memory, vcpu, host_model, uuid, images, cache_mode, networks, virtio, listen_addr, nwfilter=None, video="cirrus", console_pass="random", mac=None, qemu_ga=False):
         """
         Create VM function
         """
@@ -183,10 +199,17 @@ class wvmCreate(wvmConnect):
                   <on_crash>restart</on_crash>
                   <devices>"""
 
-        disk_letters = list(string.lowercase)
-        for image, img_type in images.items():
-            stg = self.get_storage_by_vol_path(image)
+        vd_disk_letters = list(string.lowercase)
+        fd_disk_letters = list(string.lowercase)
+        hd_disk_letters = list(string.lowercase)
+        sd_disk_letters = list(string.lowercase)
+        add_cd = True
+        #for image, img_type in images.items():
+        for volume in images:
+            stg = self.get_storage_by_vol_path(volume['path'])
             stg_type = util.get_xml_path(stg.XMLDesc(0), "/pool/@type")
+
+            if volume['device'] == 'cdrom': add_cd = False
 
             if stg_type == 'rbd':
                 ceph_user, secret_uuid, ceph_hosts = get_rbd_storage_data(stg)
@@ -195,7 +218,7 @@ class wvmCreate(wvmConnect):
                             <auth username='%s'>
                                 <secret type='ceph' uuid='%s'/>
                             </auth>
-                            <source protocol='rbd' name='%s'>""" % (img_type, cache_mode, ceph_user, secret_uuid, image)
+                            <source protocol='rbd' name='%s'>""" % (volume['type'], cache_mode, ceph_user, secret_uuid, volume['path'])
                 if isinstance(ceph_hosts, list):
                     for host in ceph_hosts:
                         if host.get('port'):
@@ -207,40 +230,61 @@ class wvmCreate(wvmConnect):
                 xml += """
                             </source>"""
             else:
-                xml += """<disk type='file' device='disk'>
+                xml += """<disk type='file' device='%s'>
                             <driver name='qemu' type='%s' cache='%s'/>
-                            <source file='%s'/>""" % (img_type, cache_mode, image)
+                            <source file='%s'/>""" % (volume['device'], volume['type'], cache_mode, volume['path'])
 
-            if virtio:
-                xml += """<target dev='vd%s' bus='virtio'/>""" % (disk_letters.pop(0),)
+            if volume['bus'] == 'virtio':
+                xml += """<target dev='vd%s' bus='%s'/>""" % (vd_disk_letters.pop(0), volume['bus'])
+            elif volume['bus'] == 'ide':
+                xml += """<target dev='hd%s' bus='%s'/>""" % (hd_disk_letters.pop(0), volume['bus'])
+            elif volume['bus'] == 'fdc':
+                xml += """<target dev='fd%s' bus='%s'/>""" % (fd_disk_letters.pop(0), volume['bus'])
             else:
-                xml += """<target dev='sd%s' bus='ide'/>""" % (disk_letters.pop(0),)
+                xml += """<target dev='sd%s' bus='%s'/>""" % (sd_disk_letters.pop(0), volume['bus'])
             xml += """</disk>"""
-
-        xml += """  <disk type='file' device='cdrom'>
-                      <driver name='qemu' type='raw'/>
-                      <source file=''/>
-                      <target dev='hda' bus='ide'/>
-                      <readonly/>
-                      <address type='drive' controller='0' bus='1' target='0' unit='1'/>
-                    </disk>"""
+        if add_cd:
+            xml += """  <disk type='file' device='cdrom'>
+                          <driver name='qemu' type='raw'/>
+                          <source file=''/>
+                          <target dev='hd%s' bus='ide'/>
+                          <readonly/>
+                        </disk>""" % (hd_disk_letters.pop(0),)
         for net in networks.split(','):
             xml += """<interface type='network'>"""
             if mac:
                 xml += """<mac address='%s'/>""" % mac
             xml += """<source network='%s'/>""" % net
+            if nwfilter:
+                xml += """<filterref filter='%s'/>""" % nwfilter
             if virtio:
                 xml += """<model type='virtio'/>"""
             xml += """</interface>"""
 
+        if console_pass == "random":
+            console_pass = "passwd='" + util.randomPasswd() + "'"
+        else:
+            if not console_pass == "":
+                console_pass = "passwd='" + console_pass + "'"
+
         xml += """  <input type='mouse' bus='ps2'/>
                     <input type='tablet' bus='usb'/>
-                    <graphics type='%s' port='-1' autoport='yes' passwd='%s' listen='127.0.0.1'/>
-                    <console type='pty'/>
-                    <video>
-                      <model type='cirrus'/>
-                    </video>
-                    <memballoon model='virtio'/>
-                  </devices>
-                </domain>""" % (QEMU_CONSOLE_DEFAULT_TYPE, util.randomPasswd())
+                    <graphics type='%s' port='-1' autoport='yes' %s listen='%s'/>
+                    <console type='pty'/> """ % (QEMU_CONSOLE_DEFAULT_TYPE, console_pass, listen_addr)
+
+        if qemu_ga:
+            xml += """ <channel type='unix'>
+                            <target type='virtio' name='org.qemu.guest_agent.0'/>
+                       </channel>"""
+
+        xml += """ <video>
+                      <model type='%s'/>
+                   </video>
+                   <memballoon model='virtio'/>
+              </devices>
+            </domain>""" % video
+
+
+
+
         self._defineXML(xml)

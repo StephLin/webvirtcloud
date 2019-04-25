@@ -8,6 +8,7 @@ from networks.forms import AddNetPool
 from vrtManager.network import wvmNetwork, wvmNetworks
 from vrtManager.network import network_size
 from libvirt import libvirtError
+from django.contrib import messages
 
 
 @login_required
@@ -87,6 +88,7 @@ def network(request, compute_id, pool):
         ipv4_dhcp_range_end = conn.get_ipv4_dhcp_range_end()
         ipv4_network = conn.get_ipv4_network()
         fixed_address = conn.get_mac_ipaddr()
+        xml = conn._XMLDesc(0)
     except libvirtError as lib_err:
         error_messages.append(lib_err)
 
@@ -121,6 +123,48 @@ def network(request, compute_id, pool):
                 return HttpResponseRedirect(request.get_full_path())
             except libvirtError as lib_err:
                 error_messages.append(lib_err.message)
+        if 'modify_fixed_address' in request.POST:
+            name = request.POST.get('name', '')
+            address = request.POST.get('address', '')
+            mac = request.POST.get('mac', '')
+            try:
+                ret_val = conn.modify_fixed_address(name, address, mac)
+                messages.success(request, "Fixed Address Operation Completed.")
+                return HttpResponseRedirect(request.get_full_path())
+            except libvirtError as lib_err:
+                error_messages.append(lib_err.message)
+            except ValueError as val_err:
+                error_messages.append(val_err.message)
+        if 'delete_fixed_address' in request.POST:
+            mac = request.POST.get('mac', '')
+            conn.delete_fixed_address(mac)
+            messages.success(request, "Fixed Address is Deleted.")
+            return HttpResponseRedirect(request.get_full_path())
+        if 'modify_dhcp_range' in request.POST:
+            range_start = request.POST.get('range_start', '')
+            range_end = request.POST.get('range_end', '')
+            try:
+                conn.modify_dhcp_range(range_start, range_end)
+                messages.success(request, "DHCP Range is Changed.")
+                return HttpResponseRedirect(request.get_full_path())
+            except libvirtError as lib_err:
+                error_messages.append(lib_err.message)
+        if 'edit_network' in request.POST:
+            edit_xml = request.POST.get('edit_xml', '')
+            if edit_xml:
+                try:
+                    new_conn = wvmNetworks(compute.hostname,
+                                   compute.login,
+                                   compute.password,
+                                   compute.type)
+                    conn.define_network(edit_xml)
+                    if conn.is_active():
+                        messages.success(request, _("Network XML is changed. Stop and start network to activate new config."))
+                    else:
+                        messages.success(request, _("Network XML is changed."))
+                    return HttpResponseRedirect(request.get_full_path())
+                except libvirtError as lib_err:
+                    error_messages.append(lib_err.message)
 
     conn.close()
 

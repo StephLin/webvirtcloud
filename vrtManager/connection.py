@@ -352,6 +352,33 @@ class wvmConnect(object):
         """Return xml capabilities"""
         return self.wvm.getCapabilities()
 
+    def get_dom_cap_xml(self):
+        """ Return domcapabilities xml"""
+
+        arch = self.wvm.getInfo()[0]
+        machine = self.get_machines(arch)
+        emulatorbin = self.get_emulator(arch)
+        virttype = self.hypervisor_type()[arch][0]
+        return self.wvm.getDomainCapabilities(emulatorbin, arch, machine, virttype)
+
+    def get_version(self):
+        ver = self.wvm.getVersion()
+        major = ver / 1000000
+        ver = ver % 1000000
+        minor = ver / 1000
+        ver = ver % 1000
+        release = ver
+        return "%s.%s.%s" % (major,minor,release)
+
+    def get_lib_version(self):
+        ver = self.wvm.getLibVersion()
+        major = ver / 1000000
+        ver %= 1000000
+        minor = ver / 1000
+        ver %= 1000
+        release = ver
+        return "%s.%s.%s" % (major,minor,release)
+
     def is_kvm_supported(self):
         """Return KVM capabilities."""
         return util.is_kvm_available(self.get_cap_xml())
@@ -381,6 +408,12 @@ class wvmConnect(object):
             interface.append(inface)
         return interface
 
+    def get_nwfilters(self):
+        nwfilters = []
+        for nwfilter in self.wvm.listNWFilters():
+            nwfilters.append(nwfilter)
+        return nwfilters
+
     def get_cache_modes(self):
         """Get cache available modes"""
         return {
@@ -391,10 +424,61 @@ class wvmConnect(object):
             'directsync': 'Direct sync',  # since libvirt 0.9.5
             'unsafe': 'Unsafe',  # since libvirt 0.9.7
         }
-    
-    def get_busses(self):
-        """Get available busses"""
-        return [ 'ide', 'scsi', 'usb', 'virtio' ]
+
+    def hypervisor_type(self):
+        """Return hypervisor type"""
+        def hypervisors(ctx):
+            result = {}
+            for arch in ctx.xpath('/capabilities/guest/arch'):
+                domain_types = arch.xpath('domain/@type')
+                arch_name = arch.xpath('@name')[0]
+                result[arch_name]= domain_types
+            return result
+        return util.get_xml_path(self.get_cap_xml(), func=hypervisors)
+
+    def get_emulator(self, arch):
+        """Return emulator """
+        return util.get_xml_path(self.get_cap_xml(), "/capabilities/guest/arch[@name='{}']/emulator".format(arch))
+
+    def get_emulators(self):
+        def emulators(ctx):
+            result = {}
+            for arch in ctx.xpath('/capabilities/guest/arch'):
+                emulator = arch.xpath('emulator')
+                arch_name = arch.xpath('@name')[0]
+                result[arch_name]= emulator
+            return result
+        return util.get_xml_path(self.get_cap_xml(), func=emulators)
+
+    def get_machines(self, arch):
+        """ Return machine type of emulation"""
+        return util.get_xml_path(self.get_cap_xml(), "/capabilities/guest/arch[@name='{}']/machine".format(arch))
+
+    def get_disk_bus_types(self):
+        """Get available disk bus types list"""
+
+        def get_bus_list(ctx):
+            result = []
+            for disk_enum in ctx.xpath('/domainCapabilities/devices/disk/enum'):
+               if disk_enum.xpath("@name")[0] == "bus":
+                   for values in disk_enum: result.append(values.text)
+            return result
+
+        # return [ 'ide', 'scsi', 'usb', 'virtio' ]
+        return util.get_xml_path(self.get_dom_cap_xml(), func=get_bus_list)
+
+    def get_disk_device_types(self):
+        """Get available disk device type list"""
+
+        def get_device_list(ctx):
+            result = []
+            for disk_enum in ctx.xpath('/domainCapabilities/devices/disk/enum'):
+                if disk_enum.xpath("@name")[0] == "diskDevice":
+                    for values in disk_enum: result.append(values.text)
+            return result
+
+        # return [ 'disk', 'cdrom', 'floppy', 'lun' ]
+        return util.get_xml_path(self.get_dom_cap_xml(), func=get_device_list)
 
     def get_image_formats(self):
         """Get available image formats"""
@@ -403,6 +487,16 @@ class wvmConnect(object):
     def get_file_extensions(self):
         """Get available image filename extensions"""
         return [ 'img', 'qcow', 'qcow2' ]
+
+    def get_video(self):
+        """ Get available graphics video types """
+        def get_video_list(ctx):
+            result = []
+            for video_enum in ctx.xpath('/domainCapabilities/devices/video/enum'):
+                if video_enum.xpath("@name")[0] == "modelType":
+                    for values in video_enum: result.append(values.text)
+            return result
+        return util.get_xml_path(self.get_dom_cap_xml(),func=get_video_list)
 
     def get_iface(self, name):
         return self.wvm.interfaceLookupByName(name)
@@ -421,6 +515,9 @@ class wvmConnect(object):
 
     def get_network(self, net):
         return self.wvm.networkLookupByName(net)
+
+    def get_nwfilter(self, name):
+        return self.wvm.nwfilterLookupByName(name)
 
     def get_instance(self, name):
         return self.wvm.lookupByName(name)
